@@ -1,0 +1,5 @@
+# core
+pymupdf
+
+# web-request
+requests
