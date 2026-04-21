@@ -28,7 +28,7 @@ else:
 
 
 links = re.findall(r'href="([^"]+\.pdf)"', html_snippet)
-base_url = "https://ctsi.nsn.us"
+base_url = "https://www.nisqually-nsn.gov"
 
 
 unique_full_links = set()
