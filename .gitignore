@@ -1,1 +1,9 @@
 *.pdf
+run.sh
+download.sh
+html.txt
+pdf_links.txt
+bad_links.txt
+temp.py
+*.log
+/skokomish_data

@@ -27,8 +27,8 @@ else:
     html_snippet = "\n".join(lines)
 
 
-links = re.findall(r'href="([^"]+\.pdf)"', html_snippet)
-base_url = "https://www.nisqually-nsn.gov"
+links = re.findall(r'href=["\']?([^"\'>]+\.pdf[^\s"\'?>]*)', html_snippet, re.I)
+base_url = "https://snoqualmietribe.us"
 
 
 unique_full_links = set()
@@ -50,8 +50,8 @@ if sorted_links:
         os.makedirs(save_dir)
         
     file_path = os.path.join(save_dir, "pdf_links.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(output_content)
+    with open(file_path, "a", encoding="utf-8") as f:
+        f.write(output_content +"\n")
     
     print(f"\nSaved in: {file_path}")
 else:
