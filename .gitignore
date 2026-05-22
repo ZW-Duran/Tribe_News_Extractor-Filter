@@ -7,3 +7,4 @@ bad_links.txt
 temp.py
 *.log
 /skokomish_data
+.DS_Store
