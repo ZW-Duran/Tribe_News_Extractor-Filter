@@ -6,9 +6,9 @@ from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
 
 # --- 配置 ---
-INPUT_DIR = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/ID/ocred"
-OUTPUT_DIR = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/ID/highlighted"
-PROCESSES = 1
+INPUT_DIR = "./ocred"
+OUTPUT_DIR = "./highlighted"
+PROCESSES = 2
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -65,14 +65,14 @@ def main():
 
     print(f"检测到 {len(tasks_to_do)} 个新任务，启动 {PROCESSES} 个进程处理...")
     
-    results = {"success": 0, "fail": 0}
+    results = {"success": 0, "error": 0}
     with Pool(processes=PROCESSES) as pool:
         for result_name, status in tqdm(pool.imap_unordered(worker_task, tasks_to_do), total=len(tasks_to_do)):
             results[status.split(":")[0]] += 1
             if status.startswith("error"):
                 tqdm.write(f"❌ 失败 {result_name}: {status}")
 
-    print(f"\n任务完成：成功 {results['success']}，失败 {results['fail']}，已跳过 {skipped_count}。")
+    print(f"\n任务完成：成功 {results['success']}，失败 {results['error']}，已跳过 {skipped_count}。")
 
 if __name__ == "__main__":
     main()

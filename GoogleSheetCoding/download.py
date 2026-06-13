@@ -60,26 +60,26 @@ def main():
         print(f"❌ 错误：在当前目录下未找到 {CSV_PATH}，请检查文件位置。")
         return
 
-    with open(CSV_PATH, mode='r', encoding='utf-8') as f:
-        # 使用 csv.reader 读取，确保能拿到绝对行号
-        reader = csv.reader(f)
-        rows = list(reader)
-
-    total_rows = len(rows)
-    print(f"📊 探测到 CSV 共包含 {total_rows} 行数据（含表头）。")
-
     download_count = 0
     skip_count = 0
     fail_count = 0
 
-    # 从第二行开始遍历 (idx 从 1 开始，对应 CSV 里的 Row 2)
-    # Python 的 enumerate(..., start=1) 可以让行号完美对齐 Excel/Sheets 左侧的真实行号！
+    # 一次性将所有行读入内存，确保 enumerate 拿到的索引与 Excel 行号严格一一对应
+    with open(CSV_PATH, mode='r', encoding='utf-8') as f:
+        rows = list(csv.reader(f))
+        
     for idx, row in enumerate(rows, start=1):
-        if idx == 1:
-            # 跳过表头 row
+        # 1. 动态过滤完全的空行（无论空行在第 1 行还是中间，它的 idx 依然代表真实的 Excel 行号）
+        if not row or "".join(row).strip() == "":
+            print(f"👻 行号 [{idx}]: 检测到完全空行，自动跳过。")
             continue
 
-        # 边界安全检查：防止某些行格子不够导致 IndexError
+        # 2. 动态识别并跳过表头行（通过内容关键字识别，完美兼容“第一行是否为空”的所有情况）
+        if "Author Last Name" in row or "Newspaper/Publisher" in row:
+            print(f"📋 行号 [{idx}]: 检测到表头行，自动跳过。")
+            continue
+
+        # 3. 边界安全检查：防止某些行格子不够导致 IndexError
         if len(row) < 14:
             continue
 
@@ -87,7 +87,7 @@ def main():
         drive_link = row[12].strip() # M 列 (Python index 12)
         n_col_val = row[13].strip()  # N 列 (Python index 13)
 
-        # 核心判断逻辑：D 列不为空，且 N 列为空（代表未完成 coding）
+        # 4. 核心判断逻辑
         if d_col_val and not n_col_val:
             if not drive_link:
                 print(f"⚠️ 行号 [{idx}]: D列有效但 M列链接为空，跳过。")
@@ -96,6 +96,7 @@ def main():
             # 提取原文件名并拼接带物理行号的全新文件名
             original_filename = get_filename_from_url(drive_link)
             new_filename = f"{idx}_{original_filename}"
+            
             # 确保后缀是 .pdf
             if not new_filename.lower().endswith('.pdf'):
                 new_filename += '.pdf'
