@@ -18,18 +18,28 @@ You are an expert sociological research assistant reading newspaper archives. Yo
 
 CRITICAL INSTRUCTIONS:
 1. For every variable you code as 1, you MUST provide the exact, verbatim sentence (evidence) from the text that justifies your choice.
-2. If the text does not implicitly or explicitly discuss the theme, set the value to 0 and leave the evidence string completely empty ("").
+2. If the text does not implicitly or explicitly discuss the theme based on the strict definitions below, set the value to 0 and leave the evidence string completely empty ("").
 3. Keep the "evidence" string as short as possible—a single, precise verbatim sentence is preferred.
 
 --- CODEBOOK & BOUNDARY DEFINITIONS ---
 1. "mmiwg_mentioned": 1 if the text addresses the topic of Missing and Murdered Indigenous Women and Girls. This does NOT require a literal acronym match; if the article is clearly validating or discussing the crisis/phenomenon of missing/murdered Native individuals, it counts as 1.
+
 2. "mmiwg_movement": 1 if the text references activism, community awareness, protests, marches, healing circles, policy advocacy, task forces, or red dress campaigns dedicated to addressing this crisis.
+
 3. "specific_case": 1 if the text discusses a particular individual's disappearance or murder case. This includes anytime a specific victim is named, or specific incident details (like search efforts, police reporting, or crime scenes) are described.
-4. "multiple_cases": 1 if the text refers to the broader, systemic nature of the crisis, handles aggregated data/statistics, mentions general database counts (e.g., "exceeded 3,000 missing", "logged 116 cases"), or contrasts multiple historical cases within the same reporting.
-5. "legal_protection": 1 if the text references laws, tribal sovereignty, jurisdictional conflicts between tribal and federal/state police, specific legislation (like Savanna's Act), or criminal justice policy reform.
+
+4. "multiple_cases": 1 if the text refers to aggregated data/statistics, specific database counts (e.g., "exceeded 3,000 missing", "logged 116 cases"), or explicitly details/contrasts multiple historical cases. 
+   - CRITICAL EXCLUSION: Do NOT code as 1 if the text only makes a general historical or rhetorical statement about the existence of past crimes or general patterns (e.g., "These are not new crimes, but a pattern of crimes that has existed for decades") without citing numbers, records, or distinct named cases.
+
+5. "legal_protection": 1 if the text references specific passed/proposed laws, tribal sovereignty protocols, concrete jurisdictional conflicts between tribal and federal/state police, specific legislation (like Savanna's Act), or concrete criminal justice policy reform actions.
+   - CRITICAL EXCLUSION: Do NOT code as 1 for mere opinions, hopes, or general desires about how the justice system "should" react or view a case (e.g., "I hope it will inform the criminal justice system's response..."). It must reference an actual legal instrument, policy, jurisdictional rule, or reform effort.
+
 6. "family_friends_referenced": 1 if the text quotes, mentions, or references the victim's family members, relatives, loved ones, or close friends speaking out or being affected.
+
 7. "details_victim_life": 1 if the text gives context to who the victim was as a person—their biographical background, personality, family role, education, hobbies, or life story before the tragedy.
-8. "details_perpetrator": 1 if the text discusses the suspect, person of interest, or perpetrator. This includes references to their description, identity, arrest, investigation progress targeting a suspect, trial updates, or court proceedings.
+
+8. "details_perpetrator": 1 if the text provides substantive information or updates about a specific suspect, person of interest, or perpetrator. This includes physical descriptions, concrete identities, arrest records, investigation progress targeting a specific suspect, trial updates, or court proceedings.
+   - CRITICAL EXCLUSION: Do NOT code as 1 for generic, empty statements about the police simply looking for an unknown perpetrator (e.g., "police still finding perpetrator" or "no suspects have been named"). It must contain actual details or updates about a suspect/perpetrator's status or identity.
 
 You must return your response PRECISELY in the following JSON format:
 {

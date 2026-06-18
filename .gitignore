@@ -8,3 +8,4 @@ temp.py
 *.log
 /skokomish_data
 .DS_Store
+*.md
