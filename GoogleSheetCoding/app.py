@@ -8,16 +8,15 @@ import pandas as pd
 # --- 1. 初始化配置与页面设置 ---
 st.set_page_config(page_title="Text Semantic Coder & Highlighter", layout="wide")
 
+# 优化为惰性加载：只有当用户开启高亮开关时，该函数才会被触发调用
 @st.cache_resource
-def load_model():
-    # 保持原有的 spaCy 预训练模型
-    return spacy.load("en_core_web_trf")
+def load_spacy_model():
+    with st.spinner("Initializing spaCy Transformer Model (First-time loading may take a while)..."):
+        return spacy.load("en_core_web_trf")
 
-nlp = load_model()
+LOCAL_MODEL_NAME = "9bc"  # 继承自你的本地 Ollama 模型配置
 
-LOCAL_MODEL_NAME = "e4b"  # 继承自你的本地 Ollama 模型配置
-
-# --- 2. 强约束 Prompt (移除了对 PDF 的表述，完美适配纯文本) ---
+# --- 2. 强约束 Prompt ---
 SYSTEM_INSTRUCTION = """
 You are an expert sociological research assistant reading newspaper archives. Your task is to perform qualitative text coding to identify specific semantic themes within the provided article.
 
@@ -49,6 +48,12 @@ CRITICAL INSTRUCTIONS:
    - CRITICAL EXCLUSION: Do NOT code as 1 for generic, empty statements about the police simply looking for an unknown perpetrator (e.g., "police still finding perpetrator" or "no suspects have been named"). It must contain actual details or updates about a suspect/perpetrator's status or identity.
 
 CONTEXTUAL ALIGNMENT TEST: When evaluating a sentence for a variable, you must ensure the *contextual meaning* of the sentence matches the variable's theme, not just the individual words. Ask yourself: "Is this sentence actually talking about the sociological theme defined, or is it just using a similar word in a completely different context (e.g., an election context vs. a criminal justice context)?" If it's a different context, you MUST code it as 0.
+
+--- TWO-STEP VERIFICATION FILTER (COMPULSORY) ---
+Before confirming any variable as 1, you must run this strict linguistic check:
+- Step 1 (Noun/Verb Check): Does the sentence physically contain the mandatory nouns/actions required by the category (e.g., kinship nouns for variable 6, legal instruments for variable 5, empirical numbers for variable 4, human character traits for variable 7)?
+- Step 2 (Context Check): Is the sentence free of the REJECTION CRITERIA listed under that category?
+If the sentence fails either check, you MUST force the value to 0.
 
 You must return your response PRECISELY in the following JSON format:
 {
@@ -82,7 +87,6 @@ def analyze_text_with_ollama(text):
         try:
             return json.loads(raw_response)
         except json.JSONDecodeError:
-            # 引入你原脚本中优秀的边界正则修复逻辑
             try:
                 def clean_evidence(match):
                     content = match.group(1)
@@ -107,34 +111,31 @@ def analyze_text_with_ollama(text):
 
 # --- 4. 纯文本 HTML 高亮渲染核心引擎 ---
 def generate_html_highlighter(text, rules):
-    """利用 spaCy 提取实体，并将其转换为内联 CSS 高亮 HTML"""
+    """只有在显式调用时，才会激活并加载库"""
+    nlp = load_spacy_model()  # 触发惰性加载缓存
     doc = nlp(text)
     
-    # 构建快速匹配字典映射
     active_rules = {}
     for r in rules:
         if r['label'].strip():
             active_rules[r['label'].strip().upper()] = r['color']
 
-    # 收集需要高亮的实体区间，并进行防重叠过滤
     spans_to_highlight = []
     for ent in doc.ents:
         if ent.label_ in active_rules:
             spans_to_highlight.append((ent.start_char, ent.end_char, ent.label_, ent.text))
             
-    # 按起始位置倒序排序（从后往前替换，避免破坏前半段的索引位置）
     spans_to_highlight = sorted(spans_to_highlight, key=lambda x: x[0], reverse=True)
     
     html_text = text
     for start, end, label, ent_text in spans_to_highlight:
         color_rgb = active_rules[label]
-        # 将用户输入的 "(1, 0, 0)" 字符串转换为标准的 css rgba 格式，增加 0.3 的不透明度，提升阅读感
         try:
             rgb_tuple = eval(color_rgb)
             css_color = f"rgba({int(rgb_tuple[0]*255)}, {int(rgb_tuple[1]*255)}, {int(rgb_tuple[2]*255)}, 0.3)"
             border_color = f"rgb({int(rgb_tuple[0]*255)}, {int(rgb_tuple[1]*255)}, {int(rgb_tuple[2]*255)})"
         except:
-            css_color = "rgba(255, 255, 0, 0.3)" # 备用黄色
+            css_color = "rgba(255, 255, 0, 0.3)" 
             border_color = "rgb(255, 255, 0)"
 
         highlighted_node = (
@@ -147,11 +148,7 @@ def generate_html_highlighter(text, rules):
         )
         html_text = html_text[:start] + highlighted_node + html_text[end:]
         
-    # 保留换行符格式
     html_text = html_text.replace("\n", "<br>")
-    
-    # 根据用户请求，为背景框设置反转色，以适应深色模式
-    # 这里将背景设为较浅的灰色，文字设为较深的灰色，以确保在深色模式下清晰可见
     return f'<div style="font-family: sans-serif; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f0f0f0; color: #333;">{html_text}</div>'
 
 # --- 5. 侧边栏交互配置 ---
@@ -161,25 +158,33 @@ with st.sidebar:
         st.warning("Please Provide Correct Password")
         st.stop()
 
-    st.header("Custom Highlighting Rules")
-    if 'rules' not in st.session_state:
-        st.session_state.rules = [{"label": "GPE", "color": "(0, 1, 1)"}, {"label": "PERSON", "color": "(1, 0, 0)"}]
+    st.header("⚡ Performance Settings")
+    # 🌟 核心功能：添加开关控制是否启动 NLP 高亮渲染，默认关闭以极致追求纯 Coding 效率
+    enable_highlighting = st.checkbox("Enable spaCy NLP Highlighting", value=False, 
+                                      help="Turning this off bypasses the heavy Transformer model and processes text instantly.")
 
-    updated_rules = []
-    for i, rule in enumerate(st.session_state.rules):
-        with st.expander(f"Rule {i+1}", expanded=True):
-            col_l, col_c = st.columns([1.5, 1])
-            new_l = col_l.text_input("Label", value=rule['label'], key=f"l_{i}")
-            new_c = col_c.text_input("RGB", value=rule['color'], key=f"c_{i}")
-            if st.button(f"🗑️ Remove", key=f"del_{i}"):
-                st.session_state.rules.pop(i)
-                st.rerun()
-            updated_rules.append({"label": new_l, "color": new_c})
-    st.session_state.rules = updated_rules
+    # 只有当高亮功能被勾选激活时，侧边栏才展开显示高亮自定义规则面板
+    if enable_highlighting:
+        st.markdown("---")
+        st.header("Custom Highlighting Rules")
+        if 'rules' not in st.session_state:
+            st.session_state.rules = [{"label": "GPE", "color": "(0, 1, 1)"}, {"label": "PERSON", "color": "(1, 0, 0)"}]
 
-    if st.button("➕ Add New Rule"):
-        st.session_state.rules.append({"label": "", "color": "(0, 0, 1)"})
-        st.rerun()
+        updated_rules = []
+        for i, rule in enumerate(st.session_state.rules):
+            with st.expander(f"Rule {i+1}", expanded=True):
+                col_l, col_c = st.columns([1.5, 1])
+                new_l = col_l.text_input("Label", value=rule['label'], key=f"l_{i}")
+                new_c = col_c.text_input("RGB", value=rule['color'], key=f"c_{i}")
+                if st.button(f"🗑️ Remove", key=f"del_{i}"):
+                    st.session_state.rules.pop(i)
+                    st.rerun()
+                updated_rules.append({"label": new_l, "color": new_c})
+        st.session_state.rules = updated_rules
+
+        if st.button("➕ Add New Rule"):
+            st.session_state.rules.append({"label": "", "color": "(0, 0, 1)"})
+            st.rerun()
 
 # --- 6. 主控制流程区 ---
 st.title("Semantic Text Coder & NLP Enhancer")
@@ -189,22 +194,26 @@ if 'session_analysis_data' not in st.session_state:
 
 with st.form("text_processor_form"):
     input_text = st.text_area("Paste your article plain text here:", height=300, 
-                              placeholder="Type or paste the news contents here for automatic qualitative coding...")
+                             placeholder="Type or paste the news contents here for automatic qualitative coding...")
     submitted = st.form_submit_button("🚀 Run Analysis & Coding")
 
 if submitted and input_text.strip():
-    with st.spinner("Processing NLP Highlighting & Ollama Coding..."):
+    # 动态调配 Spinner 的提示语
+    spinner_msg = "Running Ollama Coding Analysis..." if not enable_highlighting else "Processing NLP Highlighting & Ollama Coding..."
+    
+    with st.spinner(spinner_msg):
         # 1. 基础字数统计
         word_count = len(input_text.split())
         
         # 2. 调用本地 Ollama 进行定性编码
         analysis = analyze_text_with_ollama(input_text)
         
-        # 3. 运行 spaCy 进行前端高亮文本生成
-        highlighted_html = generate_html_highlighter(input_text, st.session_state.rules)
+        # 3. 运行条件渲染高亮视图
+        highlighted_html = None
+        if enable_highlighting:
+            highlighted_html = generate_html_highlighter(input_text, st.session_state.rules)
         
         if analysis:
-            # 建立映射：构建扁平化、符合你原本 CSV 顺序的结构
             analysis_lower = {k.lower(): v for k, v in analysis.items()}
             
             def parse_block(key):
@@ -213,7 +222,6 @@ if submitted and input_text.strip():
                 evid = block.get("evidence", "") if isinstance(block, dict) else ""
                 return val, evid
 
-            # 解析各字段数值与证据
             mmiwg_m, mmiwg_m_ev = parse_block("mmiwg_mentioned")
             mmiwg_mv, mmiwg_mv_ev = parse_block("mmiwg_movement")
             spec_c, spec_c_ev = parse_block("specific_case")
@@ -223,7 +231,6 @@ if submitted and input_text.strip():
             vic_l, vic_l_ev = parse_block("details_victim_life")
             perp, perp_ev = parse_block("details_perpetrator")
 
-            # 组装成 Pandas Dataframe 作为编辑数据源
             coding_row = {
                 "Word Count": word_count,
                 "mmiwg_mentioned": mmiwg_m, "mmiwg_mentioned_evidence": mmiwg_m_ev,
@@ -238,7 +245,7 @@ if submitted and input_text.strip():
             
             st.session_state.session_analysis_data = {
                 "dataframe": pd.DataFrame([coding_row]),
-                "html": highlighted_html
+                "html": highlighted_html # 如果开关未开启，这里为 None
             }
         else:
             st.error("Failed to generate qualitative coding from Ollama.")
@@ -249,11 +256,9 @@ if st.session_state.session_analysis_data:
     
     st.divider()
     
-    # 单元格数据回填与交互式编辑
     st.subheader("📊 Automated Qualitative Coding Results (Editable Table)")
     edited_df = st.data_editor(res["dataframe"], hide_index=True, use_container_width=True)
     
-    # 导出的快捷下载按钮
     csv_buffer = edited_df.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         label="📥 Export Coded Data to CSV",
@@ -262,6 +267,7 @@ if st.session_state.session_analysis_data:
         mime="text/csv"
     )
     
-    # 高亮文本预览区
-    st.subheader("🔍 Entity Semantic Enhancement View")
-    st.markdown(res["html"], unsafe_allow_html=True)
+    # 根据用户之前的开关，条件渲染高亮预览区
+    if res["html"]:
+        st.subheader("🔍 Entity Semantic Enhancement View")
+        st.markdown(res["html"], unsafe_allow_html=True)

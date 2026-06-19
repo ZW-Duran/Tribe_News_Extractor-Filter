@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 CSV_PATH = "./list.csv"
 OUTPUT_CSV_PATH = "./list_coded.csv"  # 实时更新与续传的目标文件
 OCRED_DIR = "./ocred"
-LOCAL_MODEL_NAME = "e4b" 
+LOCAL_MODEL_NAME = "9bc" 
 
 # --- 2. 强约束 Prompt 与期望的 JSON 结构 ---
 SYSTEM_INSTRUCTION = """
@@ -28,18 +28,28 @@ CRITICAL INSTRUCTIONS:
 
 3. "specific_case": 1 if the text discusses a particular individual's disappearance or murder case. This includes anytime a specific victim is named, or specific incident details (like search efforts, police reporting, or crime scenes) are described.
 
-4. "multiple_cases": 1 if the text refers to aggregated data/statistics, specific database counts (e.g., "exceeded 3,000 missing", "logged 116 cases"), or explicitly details/contrasts multiple historical cases. 
-   - CRITICAL EXCLUSION: Do NOT code as 1 if the text only makes a general historical or rhetorical statement about the existence of past crimes or general patterns (e.g., "These are not new crimes, but a pattern of crimes that has existed for decades") without citing numbers, records, or distinct named cases.
-
-5. "legal_protection": 1 if the text references specific passed/proposed laws, tribal sovereignty protocols, concrete jurisdictional conflicts between tribal and federal/state police, specific legislation (like Savanna's Act), or concrete criminal justice policy reform actions.
-   - CRITICAL EXCLUSION: Do NOT code as 1 for mere opinions, hopes, or general desires about how the justice system "should" react or view a case (e.g., "I hope it will inform the criminal justice system's response..."). It must reference an actual legal instrument, policy, jurisdictional rule, or reform effort.
-
+4. "multiple_cases": 1 if the text acts as an empirical aggregator of the crisis—meaning it provides specific aggregated numbers/statistics, references database counts, or transitions into detailing/contrasting distinct, separate case histories.
+   - Core Intent: This captures factual density about more than one case. Do NOT code as 1 for purely rhetorical, commemorative, or emotional expressions of collective grief (e.g., "so many loved ones who have been victims"). It must contain empirical or informational grouping, not just poetic or general acknowledgment of a widespread issue.
+5. "legal_protection": 1 if the text references specific, concrete institutional mechanisms—such as passed or proposed statutes (e.g., "Senate Resolution 60", "Savanna's Act"), tribal sovereignty protocols, specific budgetary allocations for policing, jurisdictional rules, or active policy reform measures.
+   - STRUCTURAL REQUIREMENT: The evidence must point to a tangible legal instrument, legislative bill, or a specific regulatory action taken/proposed by a government or tribal body.
+   - CRITICAL EXCLUSION (HOPE VS. FACT): Do NOT code as 1 for statements expressing how the system *should* behave, personal hopes, future expectations, or moral calls to action (e.g., "I hope it will inform the criminal justice system's response..."). General quotes about the failure, needed awareness, or desired attitude of the justice system do NOT constitute concrete legal protection.
 6. "family_friends_referenced": 1 if the text quotes, mentions, or references the victim's family members, relatives, loved ones, or close friends speaking out or being affected.
+   - CRITICAL EXCLUSION: Do NOT code as 1 if an individual is described ONLY by their professional, political, or activist title (e.g., "event organizer", "advocate", "chief", "police spokesperson") without the text explicitly stating they have a personal, familial, or friendship bond with a victim. Do not infer personal relationships from social or activist roles.
 
-7. "details_victim_life": 1 if the text gives context to who the victim was as a person—their biographical background, personality, family role, education, hobbies, or life story before the tragedy.
+7. "details_victim_life": 1 if the text provides a humanizing look into who the victim was as a living person *beyond* basic identification markers—such as their personal character, hobbies, career achievements, educational background, personal dreams, or roles within their family/community before the tragedy.
+   - STRUCTURAL THRESHOLD: The text must detail their personality or life story. 
+   - CRITICAL EXCLUSION: Do NOT code as 1 if the text only mentions basic demographic labels, standard identification markers, or chronological data necessary to describe the crime or a holiday (e.g., mentioning a victim's age, tribal affiliation, or their "birthday" to explain why a commemorative date was selected does NOT count as details of the victim's life).
 
 8. "details_perpetrator": 1 if the text provides substantive information or updates about a specific suspect, person of interest, or perpetrator. This includes physical descriptions, concrete identities, arrest records, investigation progress targeting a specific suspect, trial updates, or court proceedings.
    - CRITICAL EXCLUSION: Do NOT code as 1 for generic, empty statements about the police simply looking for an unknown perpetrator (e.g., "police still finding perpetrator" or "no suspects have been named"). It must contain actual details or updates about a suspect/perpetrator's status or identity.
+
+CONTEXTUAL ALIGNMENT TEST: When evaluating a sentence for a variable, you must ensure the *contextual meaning* of the sentence matches the variable's theme, not just the individual words. Ask yourself: "Is this sentence actually talking about the sociological theme defined, or is it just using a similar word in a completely different context (e.g., an election context vs. a criminal justice context)?" If it's a different context, you MUST code it as 0.
+
+--- TWO-STEP VERIFICATION FILTER (COMPULSORY) ---
+Before confirming any variable as 1, you must run this strict linguistic check:
+- Step 1 (Noun/Verb Check): Does the sentence physically contain the mandatory nouns/actions required by the category (e.g., kinship nouns for variable 6, legal instruments for variable 5, empirical numbers for variable 4, human character traits for variable 7)?
+- Step 2 (Context Check): Is the sentence free of the REJECTION CRITERIA listed under that category?
+If the sentence fails either check, you MUST force the value to 0.
 
 You must return your response PRECISELY in the following JSON format:
 {

@@ -9,8 +9,6 @@ from google.api_core import exceptions
 # --- 1. 云端多 API Key 与模型配置 ---
 # 放入你的两个不同 Google 账号的 API Key
 API_KEYS = [
-    "AIzaSyBEVhEvcLdafMoHrWpoAFvqVOBkMfjXqO8",
-    "AIzaSyD5JGC8zIZCL8REZ35eVyOKPFobN4c2cOQ"
 ]
 
 # 模型矩阵设置
