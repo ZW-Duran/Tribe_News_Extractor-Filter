@@ -7,9 +7,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 # --- 1. 路径与本地 Ollama 配置 ---
-CSV_PATH = "./list.csv"
-OUTPUT_CSV_PATH = "./list_coded.csv"  # 实时更新与续传的目标文件
-OCRED_DIR = "./ocred"
+CSV_PATH = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/WA/list.csv"
+OUTPUT_CSV_PATH = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/WA/list_coded.csv"  # 实时更新与续传的目标文件
+OCRED_DIR = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/WA/ocred"
 LOCAL_MODEL_NAME = "9bc" 
 
 # --- 2. 强约束 Prompt 与期望的 JSON 结构 ---

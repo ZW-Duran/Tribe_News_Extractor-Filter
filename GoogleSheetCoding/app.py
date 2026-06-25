@@ -14,7 +14,7 @@ def load_spacy_model():
     with st.spinner("Initializing spaCy Transformer Model (First-time loading may take a while)..."):
         return spacy.load("en_core_web_trf")
 
-LOCAL_MODEL_NAME = "9bc"  # 继承自你的本地 Ollama 模型配置
+LOCAL_MODEL_NAME = "9b"  # 继承自你的本地 Ollama 模型配置
 
 # --- 2. 强约束 Prompt ---
 SYSTEM_INSTRUCTION = """

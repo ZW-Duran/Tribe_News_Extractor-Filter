@@ -25,7 +25,6 @@ for pdf_path in "$INPUT_DIR"/*.pdf; do
     # 提取纯文件名（不含路径和扩展名），例如 "4_document"
     filename=$(basename "$pdf_path" .pdf)
     
-    # 【核心改动：断电续传检测】
     # 检查最终的目标 .md 文件是否已经在 ./md 文件夹中存在
     if [ -f "$OUTPUT_DIR/${filename}.md" ]; then
         echo "⏭️  跳过: ${filename}.md 已存在，无需重复转换。"

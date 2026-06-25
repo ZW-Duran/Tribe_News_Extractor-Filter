@@ -2,7 +2,7 @@ import os
 import re
 
 # 修改为你存放 PDF 的实际文件夹路径
-target_dir = "./ocred"
+target_dir = "/Users/wangzhiyuan/Documents/SOC499A_TribeNews/program/program/GoogleSheetCoding/NATIVE-NOTTRIBAL/OR/ocred"
 
 def rename_pdfs(directory):
     # 遍历文件夹中的所有文件
