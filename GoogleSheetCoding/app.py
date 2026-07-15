@@ -1,9 +1,9 @@
 import streamlit as st
 import spacy
 import json
-import ollama
 import re
 import pandas as pd
+import google.generativeai as genai
 
 # --- 1. 初始化配置与页面设置 ---
 st.set_page_config(page_title="Text Semantic Coder & Highlighter", layout="wide")
@@ -14,7 +14,7 @@ def load_spacy_model():
     with st.spinner("Initializing spaCy Transformer Model (First-time loading may take a while)..."):
         return spacy.load("en_core_web_trf")
 
-LOCAL_MODEL_NAME = "9b"  # 继承自你的本地 Ollama 模型配置
+CLOUD_MODEL_NAME = "gemma-4-31b-it"  
 
 # --- 2. 强约束 Prompt ---
 SYSTEM_INSTRUCTION = """
@@ -68,45 +68,70 @@ You must return your response PRECISELY in the following JSON format:
 }
 """
 
-# --- 3. 核心大模型分析与流修复函数 ---
-def analyze_text_with_ollama(text):
+# --- 3. 核心大模型分析与流修复函数 (已升级为 Gemini API & 三层强力解析) ---
+def analyze_text_with_gemini(text, api_key):
     prompt = f"{SYSTEM_INSTRUCTION}\n\nArticle Text:\n{text}"
     try:
-        response = ollama.generate(
-            model=LOCAL_MODEL_NAME,
-            prompt=prompt,
-            format="json", 
-            options={
-                "temperature": 0.0,  
-                "num_ctx": 16384     
-            }
+        # 配置当前线程/请求的 API Key
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(CLOUD_MODEL_NAME)
+        
+        # ─── 🛠️ 核心机制 1：强制开启 API 的 JSON 响应模式 ───
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                response_mime_type="application/json"  # 逼迫云端必须返回合法的 JSON 字典
+            )
         )
-        raw_response = response['response'].strip()
+        
+        raw_response = response.text.strip()
         if not raw_response: return None
             
         try:
-            return json.loads(raw_response)
+            # ─── 🛠️ 强力定位机制：直接斩断前置的 Thinking 文本 ───
+            start_idx = min([raw_response.find(x) for x in ['[', '{'] if raw_response.find(x) != -1], default=0)
+            clean_text = raw_response[start_idx:]
+            
+            # 反向切除尾部可能存在的垃圾字符
+            end_idx = max([clean_text.rfind(x) for x in [']', '}'] if clean_text.rfind(x) != -1], default=len(clean_text))
+            clean_text = clean_text[:end_idx + 1]
+            
+            parsed_json = json.loads(clean_text)
+            if isinstance(parsed_json, list) and len(parsed_json) > 0:
+                parsed_json = parsed_json[0]
+            return parsed_json
+
         except json.JSONDecodeError:
+            # 第二层级：尝试清洗 evidence 中未转义的破坏性引号
             try:
                 def clean_evidence(match):
-                    content = match.group(1)
-                    fixed_content = content.replace('"', "'")
-                    return f'"evidence": "{fixed_content}"'
-                repaired_response = re.sub(r'"evidence"\s*:\s*"(.*?)"', clean_evidence, raw_response, flags=re.DOTALL)
+                    content = match.group(1).replace('"', "'").replace('\n', ' ')
+                    return f'"evidence": "{content}"'
+                repaired_response = re.sub(r'"evidence"\s*:\s*"(.*?)(?<!\\)"', clean_evidence, raw_response, flags=re.DOTALL)
                 return json.loads(repaired_response)
+            
+            # 第三层级：模糊正则提取（全面放宽空格与括号限制，防止漏网）
             except:
                 fallback_dict = {}
                 keys = ["mmiwg_mentioned", "mmiwg_movement", "specific_case", "multiple_cases", 
                         "legal_protection", "family_friends_referenced", "details_victim_life", "details_perpetrator"]
                 for k in keys:
-                    match = re.search(r'"' + k + r'"\s*:\s*\{\s*"value"\s*:\s*([01])', raw_response, re.IGNORECASE)
-                    if match:
-                        fallback_dict[k] = {"value": int(match.group(1)), "evidence": "Extracted via regex fallback"}
+                    # 彻底兼容多行、任意换行、空格以及各种括号嵌套的复杂返回
+                    val_pattern = rf'"{k}"\s*:\s*\{{[^}}]*?"value"\s*:\s*["\']?([01])["\']?'
+                    val_match = re.search(val_pattern, raw_response, re.IGNORECASE | re.DOTALL)
+                    val = int(val_match.group(1)) if val_match else 0
+                    
+                    ev_pattern = rf'"{k}"\s*:\s*\{{[^}}]*?"evidence"\s*:\s*"(.*?)"'
+                    ev_match = re.search(ev_pattern, raw_response, re.IGNORECASE | re.DOTALL)
+                    if ev_match:
+                        ev = ev_match.group(1).replace('\\"', "'").replace('"', "'").replace('\n', ' ').strip()
                     else:
-                        fallback_dict[k] = {"value": 0, "evidence": ""}
+                        ev = ""
+                    fallback_dict[k] = {"value": val, "evidence": ev}
                 return fallback_dict
     except Exception as e:
-        st.error(f"Ollama Call Error: {e}")
+        st.error(f"Gemini API Call Error: {e}")
         return None
 
 # --- 4. 纯文本 HTML 高亮渲染核心引擎 ---
@@ -158,12 +183,14 @@ with st.sidebar:
         st.warning("Please Provide Correct Password")
         st.stop()
 
+    st.header("🔑 API Authentication")
+    # 提供前端输入 API KEY 的接口，无需把密钥死写在代码中
+    api_key = st.text_input("Gemini API Key", type="password", placeholder="AIzaSy...")
+
     st.header("⚡ Performance Settings")
-    # 🌟 核心功能：添加开关控制是否启动 NLP 高亮渲染，默认关闭以极致追求纯 Coding 效率
     enable_highlighting = st.checkbox("Enable spaCy NLP Highlighting", value=False, 
                                       help="Turning this off bypasses the heavy Transformer model and processes text instantly.")
 
-    # 只有当高亮功能被勾选激活时，侧边栏才展开显示高亮自定义规则面板
     if enable_highlighting:
         st.markdown("---")
         st.header("Custom Highlighting Rules")
@@ -198,15 +225,19 @@ with st.form("text_processor_form"):
     submitted = st.form_submit_button("🚀 Run Analysis & Coding")
 
 if submitted and input_text.strip():
-    # 动态调配 Spinner 的提示语
-    spinner_msg = "Running Ollama Coding Analysis..." if not enable_highlighting else "Processing NLP Highlighting & Ollama Coding..."
+    # 阻断没有输入 API Key 的提交
+    if not api_key:
+        st.error("Please enter your Gemini API Key in the sidebar first!")
+        st.stop()
+
+    spinner_msg = "Running Gemini Cloud Coding Analysis..." if not enable_highlighting else "Processing NLP Highlighting & Gemini Cloud Coding..."
     
     with st.spinner(spinner_msg):
         # 1. 基础字数统计
         word_count = len(input_text.split())
         
-        # 2. 调用本地 Ollama 进行定性编码
-        analysis = analyze_text_with_ollama(input_text)
+        # 2. 调用 Gemini API 进行定性编码
+        analysis = analyze_text_with_gemini(input_text, api_key)
         
         # 3. 运行条件渲染高亮视图
         highlighted_html = None
@@ -245,10 +276,10 @@ if submitted and input_text.strip():
             
             st.session_state.session_analysis_data = {
                 "dataframe": pd.DataFrame([coding_row]),
-                "html": highlighted_html # 如果开关未开启，这里为 None
+                "html": highlighted_html
             }
         else:
-            st.error("Failed to generate qualitative coding from Ollama.")
+            st.error("Failed to generate qualitative coding from Gemini Cloud API.")
 
 # --- 7. 结果可视化与编辑回填区 ---
 if st.session_state.session_analysis_data:
@@ -267,7 +298,6 @@ if st.session_state.session_analysis_data:
         mime="text/csv"
     )
     
-    # 根据用户之前的开关，条件渲染高亮预览区
     if res["html"]:
         st.subheader("🔍 Entity Semantic Enhancement View")
         st.markdown(res["html"], unsafe_allow_html=True)
