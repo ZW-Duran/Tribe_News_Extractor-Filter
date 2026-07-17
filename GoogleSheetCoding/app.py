@@ -2,6 +2,10 @@ import streamlit as st
 import spacy
 import json
 import re
+import os
+import subprocess
+import tempfile
+import fitz  # PyMuPDF
 import pandas as pd
 import google.generativeai as genai
 
@@ -68,15 +72,15 @@ You must return your response PRECISELY in the following JSON format:
 }
 """
 
-# --- 3. 核心大模型分析与流修复函数 (已升级为 Gemini API & 三层强力解析) ---
+# --- 3. 核心大模型分析与流修复函数 (用户输入 API Key 版) ---
 def analyze_text_with_gemini(text, api_key):
     prompt = f"{SYSTEM_INSTRUCTION}\n\nArticle Text:\n{text}"
     try:
-        # 配置当前线程/请求的 API Key
+        # 动态配置用户输入的 API Key
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(CLOUD_MODEL_NAME)
         
-        # ─── 🛠️ 核心机制 1：强制开启 API 的 JSON 响应模式 ───
+        # ─── 🛠️ 核心机制：强制开启 API 的 JSON 响应模式 ───
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -117,7 +121,6 @@ def analyze_text_with_gemini(text, api_key):
                 keys = ["mmiwg_mentioned", "mmiwg_movement", "specific_case", "multiple_cases", 
                         "legal_protection", "family_friends_referenced", "details_victim_life", "details_perpetrator"]
                 for k in keys:
-                    # 彻底兼容多行、任意换行、空格以及各种括号嵌套的复杂返回
                     val_pattern = rf'"{k}"\s*:\s*\{{[^}}]*?"value"\s*:\s*["\']?([01])["\']?'
                     val_match = re.search(val_pattern, raw_response, re.IGNORECASE | re.DOTALL)
                     val = int(val_match.group(1)) if val_match else 0
@@ -136,8 +139,7 @@ def analyze_text_with_gemini(text, api_key):
 
 # --- 4. 纯文本 HTML 高亮渲染核心引擎 ---
 def generate_html_highlighter(text, rules):
-    """只有在显式调用时，才会激活并加载库"""
-    nlp = load_spacy_model()  # 触发惰性加载缓存
+    nlp = load_spacy_model()
     doc = nlp(text)
     
     active_rules = {}
@@ -176,15 +178,71 @@ def generate_html_highlighter(text, rules):
     html_text = html_text.replace("\n", "<br>")
     return f'<div style="font-family: sans-serif; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f0f0f0; color: #333;">{html_text}</div>'
 
-# --- 5. 侧边栏交互配置 ---
+# --- 5. PDF 提取核心逻辑 (含 PyMuPDF & ocrmypdf 兜底) ---
+def extract_text_from_pdf(uploaded_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_in:
+        temp_in.write(uploaded_file.read())
+        temp_in_path = temp_in.name
+
+    extracted_text = ""
+    try:
+        # 1. 尝试直接提取电子文本
+        doc = fitz.open(temp_in_path)
+        text_blocks = []
+        for page in doc:
+            blocks = page.get_text("blocks")
+            for b in blocks:
+                if b[4].strip():
+                    text_blocks.append(b[4].strip())
+        extracted_text = "\n\n".join(text_blocks).strip()
+        doc.close()
+    except Exception as e:
+        st.warning(f"PyMuPDF native extraction failed: {e}. Retrying with OCR...")
+
+    # 2. 若无文本，调用本地 ocrmypdf
+    if not extracted_text:
+        st.info("No selectable text detected. Launching 'ocrmypdf' for optical character recognition...")
+        temp_out_path = temp_in_path.replace(".pdf", "_ocred.pdf")
+        try:
+            subprocess.run(
+                ["ocrmypdf", "--skip-text", temp_in_path, temp_out_path],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if os.path.exists(temp_out_path):
+                doc_ocr = fitz.open(temp_out_path)
+                ocr_blocks = []
+                for page in doc_ocr:
+                    blocks = page.get_text("blocks")
+                    for b in blocks:
+                        if b[4].strip():
+                            ocr_blocks.append(b[4].strip())
+                extracted_text = "\n\n".join(ocr_blocks).strip()
+                doc_ocr.close()
+                os.remove(temp_out_path)
+        except FileNotFoundError:
+            st.error("❌ 'ocrmypdf' is not installed on the server. Cannot perform OCR.")
+        except subprocess.CalledProcessError as e:
+            st.error(f"❌ OCR execution failed: {e.stderr.decode('utf-8', errors='ignore')}")
+        except Exception as e:
+            st.error(f"❌ OCR processing error: {e}")
+
+    if os.path.exists(temp_in_path):
+        os.remove(temp_in_path)
+
+    return extracted_text
+
+# --- 6. 侧边栏交互配置 ---
 with st.sidebar:
     access_code = st.text_input("Access Code", type="password")
     if access_code != "":
         st.warning("Please Provide Correct Password")
         st.stop()
 
+    # ─── 🔑 改回用户自主输入 API Key 模式 ───
     st.header("🔑 API Authentication")
-    # 提供前端输入 API KEY 的接口，无需把密钥死写在代码中
     api_key = st.text_input("Gemini API Key", type="password", placeholder="AIzaSy...")
 
     st.header("⚡ Performance Settings")
@@ -213,75 +271,90 @@ with st.sidebar:
             st.session_state.rules.append({"label": "", "color": "(0, 0, 1)"})
             st.rerun()
 
-# --- 6. 主控制流程区 ---
+# --- 7. 主控制流程区 ---
 st.title("Semantic Text Coder & NLP Enhancer")
 
 if 'session_analysis_data' not in st.session_state:
     st.session_state.session_analysis_data = None
 
+tab_text, tab_file = st.tabs(["✍️ Paste Plain Text", "📁 Upload PDF Document"])
+input_text = ""
+
+with tab_text:
+    pasted_text = st.text_area("Paste your article plain text here:", height=250, 
+                               placeholder="Type or paste the news contents here for automatic qualitative coding...")
+
+with tab_file:
+    uploaded_pdf = st.file_uploader("Upload a PDF file (supports scanned PDF auto-OCR):", type=["pdf"])
+
 with st.form("text_processor_form"):
-    input_text = st.text_area("Paste your article plain text here:", height=300, 
-                             placeholder="Type or paste the news contents here for automatic qualitative coding...")
     submitted = st.form_submit_button("🚀 Run Analysis & Coding")
 
-if submitted and input_text.strip():
-    # 阻断没有输入 API Key 的提交
+if submitted:
+    # ─── 🛡️ 安全防御：阻断未提供 Key 的请求 ───
     if not api_key:
         st.error("Please enter your Gemini API Key in the sidebar first!")
         st.stop()
 
-    spinner_msg = "Running Gemini Cloud Coding Analysis..." if not enable_highlighting else "Processing NLP Highlighting & Gemini Cloud Coding..."
-    
-    with st.spinner(spinner_msg):
-        # 1. 基础字数统计
-        word_count = len(input_text.split())
+    if uploaded_pdf is not None:
+        with st.spinner("Extracting text from PDF (performing OCR if scanned)..."):
+            input_text = extract_text_from_pdf(uploaded_pdf)
+    else:
+        input_text = pasted_text
+
+    if not input_text.strip():
+        st.warning("Please paste some text or upload a valid PDF document before processing.")
+    else:
+        spinner_msg = "Running Gemini Cloud Coding Analysis..." if not enable_highlighting else "Processing NLP Highlighting & Gemini Cloud Coding..."
         
-        # 2. 调用 Gemini API 进行定性编码
-        analysis = analyze_text_with_gemini(input_text, api_key)
-        
-        # 3. 运行条件渲染高亮视图
-        highlighted_html = None
-        if enable_highlighting:
-            highlighted_html = generate_html_highlighter(input_text, st.session_state.rules)
-        
-        if analysis:
-            analysis_lower = {k.lower(): v for k, v in analysis.items()}
+        with st.spinner(spinner_msg):
+            word_count = len(input_text.split())
             
-            def parse_block(key):
-                block = analysis_lower.get(key.lower(), {})
-                val = block.get("value", 0) if isinstance(block, dict) else 0
-                evid = block.get("evidence", "") if isinstance(block, dict) else ""
-                return val, evid
-
-            mmiwg_m, mmiwg_m_ev = parse_block("mmiwg_mentioned")
-            mmiwg_mv, mmiwg_mv_ev = parse_block("mmiwg_movement")
-            spec_c, spec_c_ev = parse_block("specific_case")
-            mult_c, mult_c_ev = parse_block("multiple_cases")
-            legal_p, legal_p_ev = parse_block("legal_protection")
-            fam_r, fam_r_ev = parse_block("family_friends_referenced")
-            vic_l, vic_l_ev = parse_block("details_victim_life")
-            perp, perp_ev = parse_block("details_perpetrator")
-
-            coding_row = {
-                "Word Count": word_count,
-                "mmiwg_mentioned": mmiwg_m, "mmiwg_mentioned_evidence": mmiwg_m_ev,
-                "mmiwg_movement": mmiwg_mv, "mmiwg_movement_evidence": mmiwg_mv_ev,
-                "specific_case": spec_c, "specific_case_evidence": spec_c_ev,
-                "multiple_cases": mult_c, "multiple_cases_evidence": mult_c_ev,
-                "legal_protection": legal_p, "legal_protection_evidence": legal_p_ev,
-                "family_friends_referenced": fam_r, "family_friends_referenced_evidence": fam_r_ev,
-                "details_victim_life": vic_l, "details_victim_life_evidence": vic_l_ev,
-                "details_perpetrator": perp, "details_perpetrator_evidence": perp_ev,
-            }
+            # 传入用户前端填入的 api_key
+            analysis = analyze_text_with_gemini(input_text, api_key)
             
-            st.session_state.session_analysis_data = {
-                "dataframe": pd.DataFrame([coding_row]),
-                "html": highlighted_html
-            }
-        else:
-            st.error("Failed to generate qualitative coding from Gemini Cloud API.")
+            highlighted_html = None
+            if enable_highlighting:
+                highlighted_html = generate_html_highlighter(input_text, st.session_state.rules)
+            
+            if analysis:
+                analysis_lower = {k.lower(): v for k, v in analysis.items()}
+                
+                def parse_block(key):
+                    block = analysis_lower.get(key.lower(), {})
+                    val = block.get("value", 0) if isinstance(block, dict) else 0
+                    evid = block.get("evidence", "") if isinstance(block, dict) else ""
+                    return val, evid
 
-# --- 7. 结果可视化与编辑回填区 ---
+                mmiwg_m, mmiwg_m_ev = parse_block("mmiwg_mentioned")
+                mmiwg_mv, mmiwg_mv_ev = parse_block("mmiwg_movement")
+                spec_c, spec_c_ev = parse_block("specific_case")
+                mult_c, mult_c_ev = parse_block("multiple_cases")
+                legal_p, legal_p_ev = parse_block("legal_protection")
+                fam_r, fam_r_ev = parse_block("family_friends_referenced")
+                vic_l, vic_l_ev = parse_block("details_victim_life")
+                perp, perp_ev = parse_block("details_perpetrator")
+
+                coding_row = {
+                    "Word Count": word_count,
+                    "mmiwg_mentioned": mmiwg_m, "mmiwg_mentioned_evidence": mmiwg_m_ev,
+                    "mmiwg_movement": mmiwg_mv, "mmiwg_movement_evidence": mmiwg_mv_ev,
+                    "specific_case": spec_c, "specific_case_evidence": spec_c_ev,
+                    "multiple_cases": mult_c, "multiple_cases_evidence": mult_c_ev,
+                    "legal_protection": legal_p, "legal_protection_evidence": legal_p_ev,
+                    "family_friends_referenced": fam_r, "family_friends_referenced_evidence": fam_r_ev,
+                    "details_victim_life": vic_l, "details_victim_life_evidence": vic_l_ev,
+                    "details_perpetrator": perp, "details_perpetrator_evidence": perp_ev,
+                }
+                
+                st.session_state.session_analysis_data = {
+                    "dataframe": pd.DataFrame([coding_row]),
+                    "html": highlighted_html
+                }
+            else:
+                st.error("Failed to generate qualitative coding from Gemini Cloud API.")
+
+# --- 8. 结果可视化与编辑/复制回填区 ---
 if st.session_state.session_analysis_data:
     res = st.session_state.session_analysis_data
     
@@ -290,13 +363,16 @@ if st.session_state.session_analysis_data:
     st.subheader("📊 Automated Qualitative Coding Results (Editable Table)")
     edited_df = st.data_editor(res["dataframe"], hide_index=True, use_container_width=True)
     
-    csv_buffer = edited_df.to_csv(index=False, encoding="utf-8-sig")
-    st.download_button(
-        label="📥 Export Coded Data to CSV",
-        data=csv_buffer,
-        file_name="coded_text_output.csv",
-        mime="text/csv"
-    )
+    
+    col_dl, col_copy = st.columns([1, 4])
+    with col_dl:
+        csv_buffer = edited_df.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button(
+            label="📥 Export to CSV File",
+            data=csv_buffer,
+            file_name="coded_text_output.csv",
+            mime="text/csv"
+        )
     
     if res["html"]:
         st.subheader("🔍 Entity Semantic Enhancement View")
