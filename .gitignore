@@ -9,5 +9,6 @@ temp.py
 /skokomish_data
 .DS_Store
 *.md
+!README.md
 /GoogleSheetCoding/coding_cloud.py
 *.csv
