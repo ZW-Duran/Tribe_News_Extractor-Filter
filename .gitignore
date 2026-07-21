@@ -7,8 +7,15 @@ bad_links.txt
 temp.py
 *.log
 /skokomish_data
-.DS_Store
 *.md
 !README.md
 /GoogleSheetCoding/coding_cloud.py
 *.csv
+
+#MacOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
