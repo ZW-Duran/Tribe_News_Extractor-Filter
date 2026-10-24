@@ -10,6 +10,10 @@ temp.py
 *.md
 !README.md
 /GoogleSheetCoding/coding_cloud.py
+/GoogleSheetCoding/coding_cloud_part1.py
+/GoogleSheetCoding/coding_cloud_part2.py
+/GoogleSheetCoding/coding_cloud_part3.py
+/GoogleSheetCoding/coding_cloud_part4.py
 *.csv
 
 #MacOS
