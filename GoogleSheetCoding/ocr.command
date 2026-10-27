@@ -3,7 +3,7 @@ cd "$(dirname "$0")"
 export MAX_IMAGE_PIXELS=1000000000
 UPLOAD_DIR="./original"
 OCRED_DIR="./ocred"
-THREADS=10
+THREADS=2
 
 # 1. 确保目录存在
 mkdir -p "$UPLOAD_DIR" "$OCRED_DIR"

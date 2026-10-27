@@ -75,8 +75,7 @@ def analyze_text_with_gemini(text, row_idx):
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.0,
-                response_mime_type="application/json"
+                temperature=0.0
             )
         )
         
@@ -164,14 +163,14 @@ def process_single_row(task):
             except:
                 return 0
 
-        # 按顺序回填到 AL ~ AP 列 (索引 37 到 41)
-        row[37] = safe_get_count("tribe_gov_officials")         # AL 列
-        row[38] = safe_get_count("state_local_gov_officials")   # AM 列
-        row[39] = safe_get_count("federal_gov_officials")       # AN 列
-        row[40] = safe_get_count("law_enforcement")             # AO 列
-        row[41] = safe_get_count("legal_professionals")         # AP 列
+  
+        row[29] = safe_get_count("tribe_gov_officials")         # AD 列
+        row[30] = safe_get_count("state_local_gov_officials")   # AE 列
+        row[31] = safe_get_count("federal_gov_officials")       # AF 列
+        row[32] = safe_get_count("law_enforcement")             # AG 列
+        row[33] = safe_get_count("legal_professionals")         # AH 列
         
-        print(f"   └─ ✅ 行号 [{idx}] 数据已成功填入 AL~AP 列。")
+        print(f"   └─ ✅ 行号 [{idx}] 数据已成功填入 AD~AH 列。")
         return idx, row, True
         
     except Exception as e:
@@ -202,12 +201,12 @@ def main():
         if idx == 1 or len(row) < 4:
             continue
             
-        d_col_val = row[3].strip() if len(row) > 3 else ""
+        e_col_val = row[4].strip() if len(row) > 4 else ""
         
-        # 以 AL 列 (索引 37) 是否填有数据作为是否已经编码过的判断依据
-        al_col_val = row[37].strip() if len(row) > 37 else ""
+        # 以 AD 列 (索引 29) 是否填有数据作为是否已经编码过的判断依据
+        ad_col_val = row[29].strip() if len(row) > 29 else ""
         
-        if d_col_val and al_col_val == "":
+        if e_col_val and ad_col_val == "":
             todo_tasks.append((idx, row))
 
     print(f"⚡️ [程序1] 过滤完毕，当前共有 {len(todo_tasks)} 行数据待处理。")

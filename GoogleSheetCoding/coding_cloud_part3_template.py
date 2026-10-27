@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import time
 import fitz  # PyMuPDF
 import re
 import google.generativeai as genai
@@ -82,33 +83,40 @@ def analyze_text_with_gemini(text, row_idx):
         genai.configure(api_key=current_api_key)
         model = genai.GenerativeModel(CLOUD_MODEL_NAME)
         
-        # 允许输出思考过程，不强制全局 application/json
-        response = model.generate_content(prompt)
+        # 🛠️ 严格配置 temperature=0.0 保证输出确定性
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0
+            )
+        )
         
         raw_response = response.text.strip()
         if not raw_response: 
             return None
         
-        # 🛠️ 核心优化：抓取文本中【最后一个】出现的 JSON 块（精准适配自我纠错）
+        # 🛠️ 更加健壮的 JSON 抓取：清洗 Markdown 标记并定位末尾大括号
         try:
-            json_blocks = re.findall(r'\{[^{}]*"academics"[^{}]*\}', raw_response, re.DOTALL)
-            if json_blocks:
-                last_json_str = json_blocks[-1]
-                return json.loads(last_json_str)
+            clean_text = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
+            start_idx = clean_text.rfind('{')
+            end_idx = clean_text.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = clean_text[start_idx:end_idx + 1]
+                return json.loads(json_str)
             else:
-                # 倒序正则抢救模式
-                fallback_dict = {}
-                keys = ["academics", "other_experts", "family_friends_referenced", "other_ordinary_people"]
-                for k in keys:
-                    val_pattern = rf'"{k}"\s*:\s*([0-9]+)'
-                    matches = re.findall(val_pattern, raw_response, re.IGNORECASE)
-                    val = int(matches[-1]) if matches else 0
-                    fallback_dict[k] = val
-                return fallback_dict
+                raise ValueError("No JSON braces found")
                 
         except Exception as parse_e:
-            print(f"   ⚠️ 行号 [{row_idx}] 结合文本解析 JSON 失败: {parse_e}")
-            return None
+            print(f"   ⚠️ 行号 [{row_idx}] JSON 解析失败，启动正则抢救模式...")
+            fallback_dict = {}
+            keys = ["academics", "other_experts", "family_friends_referenced", "other_ordinary_people"]
+            for k in keys:
+                val_pattern = rf'"{k}"\s*:\s*([0-9]+)'
+                matches = re.findall(val_pattern, raw_response, re.IGNORECASE)
+                val = int(matches[-1]) if matches else 0
+                fallback_dict[k] = val
+            return fallback_dict
                 
     except Exception as e:
         print(f"   ⚠️ Cloud API 通道报错 (行号 {row_idx}): {e}")
@@ -149,8 +157,8 @@ def process_single_row(task):
     try:
         analysis_lower = {k.lower(): v for k, v in analysis.items()}
         
-        # 动态扩展列数，确保能够写入到 AV 列 (索引 47)
-        while len(row) <= 47:
+        # 动态扩展列数，确保能够写入到 AN 列 (索引 39)
+        while len(row) <= 39:
             row.append("")
             
         def safe_get_count(key_name):
@@ -162,13 +170,14 @@ def process_single_row(task):
             except:
                 return 0
 
-        # 按精准列索引回填数据
-        row[42] = safe_get_count("academics")                 # AQ 列
-        row[43] = safe_get_count("other_experts")             # AR 列
-        row[46] = safe_get_count("family_friends_referenced") # AU 列
-        row[47] = safe_get_count("other_ordinary_people")     # AV 列
+        # 按精准列索引回填数据 (AI, AJ, AM, AN)
+        row[34] = safe_get_count("academics")                 # AI 列 (34)
+        row[35] = safe_get_count("other_experts")             # AJ 列 (35)
+        row[38] = safe_get_count("family_friends_referenced") # AM 列 (38)
+        row[39] = safe_get_count("other_ordinary_people")     # AN 列 (39)
         
-        print(f"   └─ ✅ 行号 [{idx}] 数据已成功填入 AQ, AR, AU, AV 列。")
+        print(f"   └─ ✅ 行号 [{idx}] 数据已成功填入 AI, AJ, AM, AN 列。")
+        time.sleep(2)
         return idx, row, True
         
     except Exception as e:
@@ -195,15 +204,15 @@ def main():
 
     todo_tasks = []
     for idx, row in enumerate(rows, start=1):
-        if idx == 1 or len(row) < 4:
+        if idx == 1 or len(row) < 5:
             continue
             
-        d_col_val = row[3].strip() if len(row) > 3 else ""
+        e_col_val = row[4].strip() if len(row) > 4 else ""
         
-        # 以 AQ 列 (索引 42) 是否填有数据作为断点续传判断依据
-        aq_col_val = row[42].strip() if len(row) > 42 else ""
+        # 以 AI 列 (索引 34) 是否填有数据作为断点续传判断依据
+        ai_col_val = row[34].strip() if len(row) > 34 else ""
         
-        if d_col_val and aq_col_val == "":
+        if e_col_val and ai_col_val == "":
             todo_tasks.append((idx, row))
 
     print(f"⚡️ [程序2] 过滤完毕，当前共有 {len(todo_tasks)} 行数据待处理。")

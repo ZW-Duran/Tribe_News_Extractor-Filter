@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import time
 import fitz  # PyMuPDF
 import re
 import google.generativeai as genai
@@ -74,21 +75,27 @@ def analyze_text_with_gemini(text, row_idx):
         genai.configure(api_key=current_api_key)
         model = genai.GenerativeModel(CLOUD_MODEL_NAME)
         
-        response = model.generate_content(prompt)
+        # 🛠️ 强制开启 API 的 JSON 响应模式与零温度，保证格式稳定
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0
+            )
+        )
         raw_response = response.text.strip()
         if not raw_response: 
             return None
         
-        # 🛠️ 精准倒序捕获最后一个包含 "victims" 和 "counts" 的 JSON 块
         try:
-            json_blocks = re.findall(r'\{[^{}]*"victims"[^{}]*\}', raw_response, re.DOTALL)
-            if json_blocks:
-                return json.loads(json_blocks[-1])
+            # 🛠️ 鲁棒的 JSON 提取：先清洗 markdown 标记，再精确定位首尾大括号
+            clean_text = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = clean_text[start_idx:end_idx + 1]
+                return json.loads(json_str)
             else:
-                # 应对可能嵌套较深的完整 JSON 正则匹配
-                match = re.search(r'(\{.*"victims".*"counts".*\})', raw_response, re.DOTALL)
-                if match:
-                    return json.loads(match.group(1))
                 return None
                 
         except Exception as parse_e:
@@ -135,26 +142,26 @@ def process_single_row(task):
         counts = analysis.get("counts", {})
         victims = analysis.get("victims", [])
         
-        # 1. 填入 AW ~ BD 列 (索引 48 到 55) 的汇总计数
+        # 1. 填入 AO ~ AV 列 (索引 40 到 47) 的汇总计数
         def safe_get(c_key):
             try: return int(counts.get(c_key, 0))
             except: return 0
 
-        # 确保行数组长度至少覆盖到 BD 列 (55)
-        while len(row) <= 55:
+        # 确保行数组长度至少覆盖到 AV 列 (47)
+        while len(row) <= 47:
             row.append("")
 
-        row[48] = safe_get("mm_id_male")          # AW
-        row[49] = safe_get("mm_id_female")        # AX
-        row[50] = safe_get("mm_id_nonbinary")      # AY
-        row[51] = safe_get("mm_gender_non_id")    # AZ
-        row[52] = safe_get("gv_id_male")          # BA
-        row[53] = safe_get("gv_id_female")        # BB
-        row[54] = safe_get("gv_id_nonbinary")      # BC
-        row[55] = safe_get("gv_gender_non_id")    # BD
+        row[40] = safe_get("mm_id_male")          # AO (40)
+        row[41] = safe_get("mm_id_female")        # AP (41)
+        row[42] = safe_get("mm_id_nonbinary")     # AQ (42)
+        row[43] = safe_get("mm_gender_non_id")    # AR (43)
+        row[44] = safe_get("gv_id_male")          # AS (44)
+        row[45] = safe_get("gv_id_female")        # AT (45)
+        row[46] = safe_get("gv_id_nonbinary")     # AU (46)
+        row[47] = safe_get("gv_gender_non_id")    # AV (47)
 
-        # 2. 从 BE 列 (索引 56) 开始，每 6 列循环填入受害者明细
-        base_offset = 56 # BE 列的索引
+        # 2. 从 AW 列 (索引 48) 开始，每 6 列循环填入受害者明细
+        base_offset = 48
         
         for i, v in enumerate(victims):
             v_start = base_offset + (i * 6)
@@ -163,14 +170,15 @@ def process_single_row(task):
             while len(row) < v_start + 6:
                 row.append("")
                 
-            row[v_start]     = str(v.get("name", ""))               # BE, BK, BQ...
-            row[v_start + 1] = str(v.get("race", ""))               # BF, BL, BR...
-            row[v_start + 2] = str(v.get("tribal_affiliation", ""))# BG, BM, BS...
-            row[v_start + 3] = str(v.get("age", ""))                # BH, BN, BT...
-            row[v_start + 4] = str(v.get("gender", ""))             # BI, BO, BU...
-            row[v_start + 5] = str(v.get("status", ""))             # BJ, BP, BV...
+            row[v_start]     = str(v.get("name", ""))
+            row[v_start + 1] = str(v.get("race", ""))
+            row[v_start + 2] = str(v.get("tribal_affiliation", ""))
+            row[v_start + 3] = str(v.get("age", ""))
+            row[v_start + 4] = str(v.get("gender", ""))
+            row[v_start + 5] = str(v.get("status", ""))
 
-        print(f"   └─ ✅ 行号 [{idx}] 已提取 {len(victims)} 名受害者明细，回填 AW~BD 汇总与 BE+ 明细列。")
+        print(f"   └─ ✅ 行号 [{idx}] 已提取 {len(victims)} 名受害者明细，回填 AO~AV 汇总与 AW+ 明细列。")
+        time.sleep(2)
         return idx, row, True
         
     except Exception as e:
@@ -197,15 +205,15 @@ def main():
 
     todo_tasks = []
     for idx, row in enumerate(rows, start=1):
-        if idx == 1 or len(row) < 4:
+        if idx == 1 or len(row) < 5:
             continue
             
-        d_col_val = row[3].strip() if len(row) > 3 else ""
+        e_col_val = row[4].strip() if len(row) > 4 else ""
         
-        # 以 AW 列 (索引 48) 是否填有数据作为断点续传判断依据
-        aw_col_val = row[48].strip() if len(row) > 48 else ""
+        # 以 AO 列 (索引 40) 是否填有数据作为断点续传判断依据
+        ao_col_val = row[40].strip() if len(row) > 40 else ""
         
-        if d_col_val and aw_col_val == "":
+        if e_col_val and ao_col_val == "":
             todo_tasks.append((idx, row))
 
     print(f"⚡️ [程序4] 过滤完毕，当前共有 {len(todo_tasks)} 行数据待处理。")

@@ -57,14 +57,14 @@ If the sentence fails either check, you MUST force the value to 0.
 
 You must return your response PRECISELY in the following JSON format:
 {
-  "mmiwg_mentioned": {"value": 0, "evidence": ""},
-  "mmiwg_movement": {"value": 0, "evidence": ""},
-  "specific_case": {"value": 0, "evidence": ""},
-  "multiple_cases": {"value": 0, "evidence": ""},
-  "legal_protection": {"value": 0, "evidence": ""},
-  "family_friends_referenced": {"value": 0, "evidence": ""},
-  "details_victim_life": {"value": 0, "evidence": ""},
-  "details_perpetrator": {"value": 0, "evidence": ""}
+  "mmiwg_mentioned": 0,
+  "mmiwg_movement": 0,
+  "specific_case": 0,
+  "multiple_cases": 0,
+  "legal_protection": 0,
+  "family_friends_referenced": 0,
+  "details_victim_life": 0,
+  "details_perpetrator": 0
 }
 """
 
@@ -81,85 +81,57 @@ def analyze_text_with_gemini(text, row_idx):
     prompt = f"{SYSTEM_INSTRUCTION}\n\nArticle Text:\n{text}"
     
     current_api_key = API_KEY_ODD if row_idx % 2 != 0 else API_KEY_EVEN
-    key_label = "Key_Odd" if row_idx % 2 != 0 else "Key_Even"
     
     try:
-        # 线程安全配置 Key
         genai.configure(api_key=current_api_key)
         model = genai.GenerativeModel(CLOUD_MODEL_NAME)
         
-        # ─── 🛠️ 核心修复 1：强制开启 API 的 JSON 响应模式 ───
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.0,
-                response_mime_type="application/json"  # 逼迫云端必须返回合法的 JSON 字典
+                temperature=0.0
             )
         )
         
-        # 限流冷却
         time.sleep(0)
         
         raw_response = response.text.strip()
         if not raw_response: return None
         
         try:
-            # ─── 🛠️ 强力定位机制：直接斩断前置的 Thinking 文本 ───
             start_idx = min([raw_response.find(x) for x in ['[', '{'] if raw_response.find(x) != -1], default=0)
             clean_text = raw_response[start_idx:]
             
-            # 反向切除尾部可能存在的垃圾字符
             end_idx = max([clean_text.rfind(x) for x in [']', '}'] if clean_text.rfind(x) != -1], default=len(clean_text))
             clean_text = clean_text[:end_idx + 1]
             
-            # 解析纯净 JSON
             parsed_json = json.loads(clean_text)
             
-            # 如果模型返回的是单元素数组（如你 temp.py 里的 [{...}]），直接解包出里面的字典
             if isinstance(parsed_json, list) and len(parsed_json) > 0:
                 parsed_json = parsed_json[0]
                 
             return parsed_json
             
         except json.JSONDecodeError:
-            # 第二层级：尝试清洗 evidence 中未转义的破坏性引号
-            try:
-                def clean_evidence(match):
-                    content = match.group(1).replace('"', "'").replace('\n', ' ')
-                    return f'"evidence": "{content}"'
-                repaired_response = re.sub(r'"evidence"\s*:\s*"(.*?)(?<!\\)"', clean_evidence, raw_response, flags=re.DOTALL)
-                return json.loads(repaired_response)
-            # 第三层级：模糊正则提取（全面放宽空格与括号限制，防止漏网）
-            except:
-                print(f"   ⚠️ 行号 [{row_idx}] 遭遇强阻碍，启用模糊正则抢救数据...")
-                fallback_dict = {}
-                keys = [
-                    "mmiwg_mentioned", "mmiwg_movement", "specific_case", "multiple_cases", 
-                    "legal_protection", "family_friends_referenced", "details_victim_life", "details_perpetrator"
-                ]
-                for k in keys:
-                    # ─── 🛠️ 核心修复 2：彻底重写模糊正则，允许任意换行、空格以及各种括号嵌套 ───
-                    # 精准定位键名后，在接下来的 150 个字符内暴力搜寻 0 或 1
-                    val_pattern = rf'"{k}"\s*:\s*\{{[^}}]*?"value"\s*:\s*["\']?([01])["\']?'
-                    val_match = re.search(val_pattern, raw_response, re.IGNORECASE | re.DOTALL)
-                    val = int(val_match.group(1)) if val_match else 0
-                    
-                    # 模糊捞取 evidence 的内容
-                    ev_pattern = rf'"{k}"\s*:\s*\{{[^}}]*?"evidence"\s*:\s*"(.*?)"'
-                    ev_match = re.search(ev_pattern, raw_response, re.IGNORECASE | re.DOTALL)
-                    
-                    if ev_match:
-                        ev = ev_match.group(1).replace('\\"', "'").replace('"', "'").replace('\n', ' ').strip()
-                    else:
-                        ev = ""
-                        
-                    fallback_dict[k] = {"value": val, "evidence": ev}
-                return fallback_dict
+            print(f"   ⚠️ 行号 [{row_idx}] 遭遇 JSON 解析阻碍，启用精准正则抢救数据...")
+            fallback_dict = {}
+            keys = [
+                "mmiwg_mentioned", "mmiwg_movement", "specific_case", "multiple_cases", 
+                "legal_protection", "family_friends_referenced", "details_victim_life", "details_perpetrator"
+            ]
+            for k in keys:
+                # 重写正则：针对扁平 JSON 提取数字 0 或 1
+                val_pattern = rf'"{k}"\s*:\s*([01])'
+                val_match = re.search(val_pattern, raw_response, re.IGNORECASE)
+                val = int(val_match.group(1)) if val_match else 0
+                fallback_dict[k] = val
+            return fallback_dict
                 
     except Exception as e:
         print(f"   ⚠️ Cloud API 异步通道报错 (行号 {row_idx}): {e}")
         time.sleep(0) 
         return None
+
 # --- 3. 核心异步线程工作函数 ---
 def process_single_row(task):
     idx, row = task
@@ -195,32 +167,28 @@ def process_single_row(task):
     try:
         analysis_lower = {k.lower(): v for k, v in analysis.items()}
         
-        # 动态确保行列表长度足够 (至少 32 个元素，即索引 0 到 31/AF列)
-        while len(row) <= 31:
+        # 动态确保行列表长度足够覆盖到 Y 列 (至少 25 个元素，即索引 0 到 24)
+        while len(row) <= 24:
             row.append("")
             
-        def safe_get_data(key_name):
-            """安全提取 value 和 evidence 双字段"""
-            data_block = analysis_lower.get(key_name.lower())
-            val = 0
-            ev = ""
-            if isinstance(data_block, dict):
-                try: val = int(data_block.get("value", 0))
-                except: val = 0
-                ev = str(data_block.get("evidence", "")).strip()
-                # 再次过滤掉可能破坏 CSV 格式的内部换行符
-                ev = ev.replace("\n", " ").replace("\r", "")
-            return val, ev
+        def safe_get_val(key_name):
+            """安全提取单个整数 0 或 1"""
+            val = analysis_lower.get(key_name.lower(), 0)
+            try:
+                return int(val)
+            except:
+                return 0
 
-        # 按照最新要求填入 Value (偶数列) 和 Evidence (奇数列)
-        row[15], row[16] = safe_get_data("mmiwg_mentioned")          # P, Q
-        row[17], row[18] = safe_get_data("mmiwg_movement")           # R, S
-        row[19], row[20] = safe_get_data("specific_case")            # T, U
-        row[21], row[22] = safe_get_data("multiple_cases")           # V, W
-        row[23], row[24] = safe_get_data("legal_protection")         # X, Y
-        row[27], row[28] = safe_get_data("family_friends_referenced") # AE, AF
-        row[29], row[30] = safe_get_data("details_victim_life")       # AG, AH
-        row[31], row[32] = safe_get_data("details_perpetrator")       # AI, AJ
+        # 按目标列索引精准填入：
+        row[15] = safe_get_val("mmiwg_mentioned")           # P 列 (15)
+        row[16] = safe_get_val("mmiwg_movement")            # Q 列 (16)
+        row[17] = safe_get_val("specific_case")             # R 列 (17)
+        row[18] = safe_get_val("multiple_cases")            # S 列 (18)
+        row[19] = safe_get_val("legal_protection")          # T 列 (19)
+        # row[20] (U列) 与 row[21] (V列) 保持原样，不作覆盖
+        row[22] = safe_get_val("family_friends_referenced")  # W 列 (22)
+        row[23] = safe_get_val("details_victim_life")        # X 列 (23)
+        row[24] = safe_get_val("details_perpetrator")        # Y 列 (24)
         
         print(f"   └─ ✅ 行号 [{idx}] 数据结构化完成，已存入缓冲区。")
         return idx, row, True
@@ -231,7 +199,6 @@ def process_single_row(task):
 
 # --- 4. 主控制流 ---
 def main():
-    # ─── 🛠️ 核心修复：用任意一个 Key 激活 SDK 初始化保护，防止其在本地抛错 ───
     try:
         genai.configure(api_key=API_KEY_ODD)
     except Exception as e:
@@ -244,26 +211,24 @@ def main():
     else:
         current_csv_source = CSV_PATH
         print(f"📖 未检测到历史缓存，加载初始基础表: {current_csv_source}")
-        
-    # ... 后续逻辑完全保持不变 ...
 
     with open(current_csv_source, mode='r', encoding='utf-8', newline='') as f:
         rows = list(csv.reader(f))
 
-    total_rows = len(rows)
     todo_tasks = []
     
     for idx, row in enumerate(rows, start=1):
-        # 表头或空行跳过
-        if idx == 1 or len(row) < 4:
+        # 跳过表头或空行
+        if idx == 1 or len(row) < 5:
             continue
             
-        d_col_val = row[3].strip() if len(row) > 3 else ""
+        # 以 E 列 (索引 4) 是否有数据作为判别基础
+        e_col_val = row[4].strip() if len(row) > 4 else ""
         
-        # 判断 Q 列 (索引 16) 是否已经存在且有数据，以此作为断点续传的依据
-        q_col_val = row[16].strip() if len(row) > 16 else ""
+        # 以 P 列 (索引 15) 是否为空作为续传依据
+        p_col_val = row[15].strip() if len(row) > 15 else ""
         
-        if d_col_val and not q_col_val:
+        if e_col_val and not p_col_val:
             todo_tasks.append((idx, row))
 
     print(f"⚡️ [任务分流] 过滤完毕，当前共有 {len(todo_tasks)} 行数据需要处理。")
@@ -277,13 +242,12 @@ def main():
                 success_count += 1
                 # 实时落盘
                 with open(OUTPUT_CSV_PATH, mode='w', encoding='utf-8', newline='') as f_write:
-                    # 使用 QUOTE_MINIMAL 确保含有逗号和双引号的 evidence 被安全包裹
                     writer = csv.writer(f_write, quoting=csv.QUOTE_MINIMAL)
                     writer.writerows(rows)
 
     print("\n" + "="*40)
     print("🎉 Cloud API 编码结束！")
-    print(f"   - 本次运行成功提取: {success_count} 行 (包含 Evidence 抽取)")
+    print(f"   - 本次运行成功提取并写入: {success_count} 行")
     print("="*40)
 
 if __name__ == "__main__":

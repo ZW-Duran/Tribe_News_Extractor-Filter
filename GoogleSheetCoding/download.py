@@ -73,13 +73,13 @@ def main():
         if len(row) < 13:
             continue
 
-        d_col_val = row[3].strip()   # D 列 (Python index 3)
+        d_col_val = row[4].strip()   # E 列 (Python index 4)
         drive_link = row[12].strip() # M 列 (Python index 12)
 
         # 4. 核心判断逻辑：只要 D 列有东西就下载
         if d_col_val:
             if not drive_link:
-                print(f"⚠️ 行号 [{idx}]: D列有效但 M列链接为空，跳过。")
+                print(f"⚠️ 行号 [{idx}]: E列有效但 M列链接为空，跳过。")
                 continue
 
             # 生成 004.pdf 格式的文件名（:03d 表示至少3位数字，不足的前面补0）

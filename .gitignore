@@ -8,6 +8,7 @@ temp.py
 *.log
 /skokomish_data
 *.md
+*.csv
 !README.md
 /GoogleSheetCoding/coding_cloud.py
 /GoogleSheetCoding/coding_cloud_part1.py
