@@ -171,6 +171,7 @@ def process_single_row(task):
         row[33] = safe_get_count("legal_professionals")         # AH 列
         
         print(f"   └─ ✅ 行号 [{idx}] 数据已成功填入 AD~AH 列。")
+        time.sleep(2)
         return idx, row, True
         
     except Exception as e:

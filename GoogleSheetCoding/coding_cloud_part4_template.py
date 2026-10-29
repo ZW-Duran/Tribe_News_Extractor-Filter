@@ -1,9 +1,9 @@
 import os
 import csv
 import json
-import time
 import fitz  # PyMuPDF
 import re
+import time
 import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,22 +16,25 @@ API_KEY_ODD = ""   # 负责奇数行
 API_KEY_EVEN = "" # 负责偶数行
 CLOUD_MODEL_NAME = "gemma-4-31b-it" 
 
-# --- 2. 程序 4 专属 System Prompt (受害者明细与交叉汇总) ---
+# --- 2. 程序 4 专属 System Prompt (受害者明细、嫌疑人信息与交叉汇总) ---
 SYSTEM_INSTRUCTION = """
-You are an expert sociological research assistant reading US newspaper archives. Your task is to perform qualitative and quantitative coding for ALL VICTIMS referenced in the text.
+You are an expert sociological research assistant reading US newspaper archives. Your task is to perform qualitative and quantitative coding for ALL VICTIMS and SUSPECTS/PERPETRATORS referenced in the text.
 
 CRITICAL INSTRUCTIONS:
-1. GEOGRAPHIC BOUNDARY: Process ONLY victims within the USA. EXCLUDE any victims outside of the USA.
+1. GEOGRAPHIC BOUNDARY: Process ONLY victims and suspects within the USA. EXCLUDE any outside of the USA.
 2. INDIVIDUALIZATION: Extract every distinct victim mentioned.
 3. STATUS CATEGORIES:
-   - "murdered_or_missing": Victim was murdered, killed, disappeared, or is currently missing.
-   - "general_violence": Victim suffered non-fatal violence (e.g., physical assault, domestic violence, abuse, kidnapping survivor) but is NOT murdered or missing.
+- "murdered_or_missing": Victim was murdered, killed, disappeared, or is currently missing.
+- "general_violence": Victim suffered non-fatal violence (e.g., physical assault, domestic violence, abuse, kidnapping survivor) but is NOT murdered or missing.
 4. GENDER CATEGORIES: "male", "female", "nonbinary", "unknown".
 5. RACE / TRIBAL AFFILIATION: Extract exact race/ethnicity and tribal affiliation if mentioned (e.g., "Navajo Nation", "Cherokee"). Use "Unknown" if not mentioned.
+6. SUSPECTS / PERPETRATORS: 
+- Count the total number of distinct suspects, persons of interest, or perpetrators referenced in the text (e.g., 0, 1, 2...).
+- Extract the race/ethnicity of the suspect(s). If count is 0, leave race completely empty (""). If there are multiple suspects with different races, list all of them clearly separated by commas within the same string (e.g., "White, Native American").
 
 --- OUTPUT FORMAT ---
 1. Step-by-step list each victim identified, verifying their status, gender, race, tribal affiliation, and age.
-2. At the VERY END, output EXACTLY ONE final JSON object containing both the list of individual victims and the summary count matrix.
+2. At the VERY END, output EXACTLY ONE final JSON object containing the list of victims, the summary count matrix, and the suspect information.
 
 Final JSON format:
 {
@@ -45,6 +48,10 @@ Final JSON format:
       "status": "murdered_or_missing" 
     }
   ],
+  "suspect_info": {
+    "perpetrators_count": 0,
+    "perpetrators_race": ""
+  },
   "counts": {
     "mm_id_male": 0,
     "mm_id_female": 0,
@@ -75,7 +82,6 @@ def analyze_text_with_gemini(text, row_idx):
         genai.configure(api_key=current_api_key)
         model = genai.GenerativeModel(CLOUD_MODEL_NAME)
         
-        # 🛠️ 强制开启 API 的 JSON 响应模式与零温度，保证格式稳定
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -87,7 +93,6 @@ def analyze_text_with_gemini(text, row_idx):
             return None
         
         try:
-            # 🛠️ 鲁棒的 JSON 提取：先清洗 markdown 标记，再精确定位首尾大括号
             clean_text = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
             start_idx = clean_text.find('{')
             end_idx = clean_text.rfind('}')
@@ -115,7 +120,7 @@ def process_single_row(task):
         print(f"⏭️ 行号 [{idx}]: 未找到对应的 OCR 文件，跳过。")
         return idx, row, False
 
-    print(f"🚀 行号 [{idx}] ──> 正在提取受害者明细与交叉统计: {os.path.basename(pdf_path)}")
+    print(f"🚀 行号 [{idx}] ──> 正在提取受害者、嫌疑人及交叉统计: {os.path.basename(pdf_path)}")
 
     try:
         doc = fitz.open(pdf_path)
@@ -141,15 +146,30 @@ def process_single_row(task):
     try:
         counts = analysis.get("counts", {})
         victims = analysis.get("victims", [])
+        suspect_info = analysis.get("suspect_info", {})
         
-        # 1. 填入 AO ~ AV 列 (索引 40 到 47) 的汇总计数
+        # 确保行数组长度至少覆盖到 AV 列 (47) 以及明细列
+        while len(row) <= 47:
+            row.append("")
+
+        # 1. 填入 AK 列 (索引 36) 和 AL 列 (索引 37) 的嫌疑人信息
+        try:
+            p_count = int(suspect_info.get("perpetrators_count", 0))
+        except:
+            p_count = 0
+            
+        row[36] = p_count # AK
+        
+        # 规则：如果人数为 0，race 强制留空；否则提取种族（多个会组合在同一个单元格）
+        if p_count == 0:
+            row[37] = "" # AL
+        else:
+            row[37] = str(suspect_info.get("perpetrators_race", "")) # AL
+
+        # 2. 填入 AO ~ AV 列 (索引 40 到 47) 的汇总计数
         def safe_get(c_key):
             try: return int(counts.get(c_key, 0))
             except: return 0
-
-        # 确保行数组长度至少覆盖到 AV 列 (47)
-        while len(row) <= 47:
-            row.append("")
 
         row[40] = safe_get("mm_id_male")          # AO (40)
         row[41] = safe_get("mm_id_female")        # AP (41)
@@ -160,13 +180,12 @@ def process_single_row(task):
         row[46] = safe_get("gv_id_nonbinary")     # AU (46)
         row[47] = safe_get("gv_gender_non_id")    # AV (47)
 
-        # 2. 从 AW 列 (索引 48) 开始，每 6 列循环填入受害者明细
+        # 3. 从 AW 列 (索引 48) 开始，每 6 列循环填入受害者明细
         base_offset = 48
         
         for i, v in enumerate(victims):
             v_start = base_offset + (i * 6)
             
-            # 动态扩展列长以适配多个受害者
             while len(row) < v_start + 6:
                 row.append("")
                 
@@ -177,7 +196,7 @@ def process_single_row(task):
             row[v_start + 4] = str(v.get("gender", ""))
             row[v_start + 5] = str(v.get("status", ""))
 
-        print(f"   └─ ✅ 行号 [{idx}] 已提取 {len(victims)} 名受害者明细，回填 AO~AV 汇总与 AW+ 明细列。")
+        print(f"   └─ ✅ 行号 [{idx}] 已写入嫌疑人数据及 {len(victims)} 名受害者明细。")
         time.sleep(2)
         return idx, row, True
         
